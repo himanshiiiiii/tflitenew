@@ -1,9 +1,11 @@
 package com.example.tflite_integration_poc
 
 import android.content.Context
-import org.tensorflow.lite.Interpreter
 import android.util.Log
+import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.concurrent.thread
 
 class TFLiteInterpreter(context: Context, modelPath: String) {
     private val interpreter: Interpreter
@@ -19,45 +21,71 @@ class TFLiteInterpreter(context: Context, modelPath: String) {
         interpreter = Interpreter(mappedByteBuffer)
     }
 
-    fun predict(input: Array<IntArray>): Array<IntArray> {
-        // Initialize the output tensor with shape [16, 128, 56] as per the model output
-        val output = Array(16) { FloatArray(128) }  // Output shape [16, 128, 56]
+    fun predict(inputIds: Array<IntArray>, attentionMask: Array<IntArray>): Array<IntArray> {
+        Log.d("TFLiteInterpreter", "Starting prediction...")
 
-        // Log input shape for debugging purposes
-        Log.d("Debug", "Input Shape: ${input.contentDeepToString()}")
+        val batchSize = 1
+        val sequenceLength = 128  // Expected sequence length
+        val numClasses = 56 // Adjust this to your model's output classes
 
-        // Reshape the input to match the expected shape [16, 128] (batch size 16, sequence length 128)
-        val reshapedInput = input  // Assuming input is already [16, 128]
+        val inputBuffer = ByteBuffer.allocateDirect(batchSize * sequenceLength * 4)
+            .order(ByteOrder.nativeOrder())
 
-        // Run the model with the reshaped input
-        interpreter.run(reshapedInput, output)
-
-        // Log output shape for debugging purposes
-        Log.d("Debug", "Output Shape: ${output.contentDeepToString()}")
-
-        // Extract the class index with the highest logit value (most confident class) for each token in the sequence
-        val predictions = output.mapIndexed { batchIndex, sequence ->
-            sequence.mapIndexed { tokenIndex, value ->
-                // Get the predicted class index (most probable class)
-                tokenIndex  // This is the index of the highest logit, we assume here it’s the correct index for the class
-            }
+        for (i in inputIds[0]) {
+            inputBuffer.putInt(i)  // Populate input_ids buffer
         }
 
-        // Ensure that all predicted indices are within the valid range [0, 55] before accessing them
-        return predictions.map { batch ->
-            batch.map { index ->
-                // Coerce the index to be within the valid range of [0, 55]
-                index.coerceIn(0, 55)
-            }.toIntArray()  // Convert each batch's indices to IntArray
-        }.toTypedArray()  // Convert the list of IntArrays back to an Array of IntArrays
+        val attentionMaskBuffer = ByteBuffer.allocateDirect(batchSize * sequenceLength * 4)
+            .order(ByteOrder.nativeOrder())
+
+        for (i in attentionMask[0]) {
+            attentionMaskBuffer.putInt(i)  // Populate attention_mask buffer
+        }
+
+        inputBuffer.rewind()
+        attentionMaskBuffer.rewind()
+
+        val outputBuffer = ByteBuffer.allocateDirect(batchSize * sequenceLength * numClasses * 4)
+            .order(ByteOrder.nativeOrder())
+
+        try {
+            Log.d("TFLiteInterpreter", "Running inference...")
+            interpreter.run(inputBuffer, outputBuffer)
+
+            // Log the raw output (logits or raw scores)
+            val rawOutput = Array(batchSize) { FloatArray(sequenceLength * numClasses) }
+            outputBuffer.rewind()
+            for (i in 0 until batchSize) {
+                for (j in 0 until sequenceLength * numClasses) {
+                    rawOutput[i][j] = outputBuffer.getFloat()  // Get raw logits
+                }
+            }
+
+            // Log the raw output (for debugging purposes)
+            Log.d("TFLiteInterpreter", "Raw Output: ${rawOutput.contentDeepToString()}")
+
+            // Process logits to final predictions (e.g., applying argmax)
+            val output = Array(batchSize) { IntArray(sequenceLength) }
+            for (i in 0 until batchSize) {
+                for (j in 0 until sequenceLength) {
+                    // Get the slice of the logits for the current token
+                    val logitsSlice = rawOutput[i].sliceArray(j * numClasses until (j + 1) * numClasses)
+
+                    // Find the index of the max logit (argmax)
+                    val maxIndex = logitsSlice.indices.maxByOrNull { logitsSlice[it] } ?: 0
+                    output[i][j] = maxIndex
+                }
+            }
+
+            Log.d("TFLiteInterpreter", "Inference complete. Processed Output: ${output.contentDeepToString()}")
+
+            return output
+        } catch (e: Exception) {
+            Log.e("TFLiteInterpreter", "Error running inference: ${e.message}")
+            e.printStackTrace()
+            return Array(batchSize) { IntArray(sequenceLength) }
+        }
     }
-
-
-
-
-
-
-
 
     fun close() {
         interpreter.close()

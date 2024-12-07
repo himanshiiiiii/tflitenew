@@ -47,8 +47,10 @@ android {
 dependencies {
 
     // tflite
-    implementation ("org.tensorflow:tensorflow-lite:2.12.0")
+    implementation ("org.tensorflow:tensorflow-lite:2.13.0")
     implementation ("org.tensorflow:tensorflow-lite-support:0.4.3")
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.0")
+
 
     // Jetpack Compose dependencies
     implementation ("androidx.compose.ui:ui:1.4.3") // Latest Compose UI version
